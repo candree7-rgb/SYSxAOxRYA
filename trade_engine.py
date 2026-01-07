@@ -165,14 +165,16 @@ class TradeEngine:
             return {
                 "risk_pct": RISK_PCT,
                 "risk_amount": round(risk_amount, 2),
-                "equity_at_entry": round(equity, 2)
+                "equity_at_entry": round(equity, 2),
+                "leverage": LEVERAGE
             }
         except Exception as e:
             self.log.warning(f"Could not get risk info: {e}")
             return {
                 "risk_pct": RISK_PCT,
                 "risk_amount": 0,
-                "equity_at_entry": 0
+                "equity_at_entry": 0,
+                "leverage": LEVERAGE
             }
 
     # ---------- entry gatekeepers ----------

@@ -390,6 +390,7 @@ def main():
                         "risk_pct": risk_info["risk_pct"],
                         "risk_amount": risk_info["risk_amount"],
                         "equity_at_entry": risk_info["equity_at_entry"],
+                        "leverage": risk_info["leverage"],
                     }
                     inc_trades_today()
                     log.info(f"🟡 ENTRY PLACED {sig['symbol']} {sig['side'].upper()} trigger={sig['trigger']} (id={trade_id})")
