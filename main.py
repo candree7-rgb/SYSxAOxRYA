@@ -166,19 +166,38 @@ def main():
                 if new_sl and new_sl != old_sl and not tr.get("sl_moved_to_be"):
                     log.info(f"🔄 Signal SL updated for {tr['symbol']}: {old_sl} → {new_sl}")
 
-                    # Apply SL cap if configured
                     entry = tr.get("trigger") or tr.get("entry_price")
-                    if CAP_SL_DISTANCE_PCT > 0 and entry:
-                        sl_distance = abs(float(new_sl) - float(entry)) / float(entry) * 100
-                        if sl_distance > CAP_SL_DISTANCE_PCT:
-                            cap_pct = CAP_SL_DISTANCE_PCT / 100.0
-                            old_new_sl = new_sl
-                            side = tr.get("side")
-                            if side == "Sell":  # Short: SL is above entry
-                                new_sl = float(entry) * (1 + cap_pct)
-                            else:  # Long: SL is below entry
-                                new_sl = float(entry) * (1 - cap_pct)
-                            log.info(f"📍 SL capped: {old_new_sl} → {new_sl} ({sl_distance:.1f}% → {CAP_SL_DISTANCE_PCT}%)")
+                    sl_distance = abs(float(new_sl) - float(entry)) / float(entry) * 100 if entry else 0
+
+                    # Check MAX_SL_DISTANCE_PCT - cancel trade if SL too far
+                    if MAX_SL_DISTANCE_PCT > 0 and sl_distance > MAX_SL_DISTANCE_PCT:
+                        log.info(f"❌ SL too far ({sl_distance:.1f}% > {MAX_SL_DISTANCE_PCT}%) - cancelling {tr['symbol']}")
+                        if not is_open:
+                            # Trade not filled yet - cancel entry order
+                            try:
+                                engine.cancel_entry_order(tr["symbol"], tr.get("entry_order_id"))
+                                log.info(f"🗑️ Entry order cancelled for {tr['symbol']}")
+                            except Exception as e:
+                                log.warning(f"Failed to cancel entry: {e}")
+                            tr["status"] = "cancelled"
+                            tr["exit_reason"] = "sl_too_far"
+                            tr["closed_ts"] = time.time()
+                        else:
+                            # Trade already open - just warn (can't auto-close)
+                            log.warning(f"⚠️ {tr['symbol']} already open with wide SL ({sl_distance:.1f}%) - manual review needed")
+                            tr["sl_price"] = new_sl  # Still save it
+                        continue  # Skip further processing for this trade
+
+                    # Apply SL cap if configured (only if not cancelled above)
+                    if CAP_SL_DISTANCE_PCT > 0 and entry and sl_distance > CAP_SL_DISTANCE_PCT:
+                        cap_pct = CAP_SL_DISTANCE_PCT / 100.0
+                        old_new_sl = new_sl
+                        side = tr.get("side")
+                        if side == "Sell":  # Short: SL is above entry
+                            new_sl = float(entry) * (1 + cap_pct)
+                        else:  # Long: SL is below entry
+                            new_sl = float(entry) * (1 - cap_pct)
+                        log.info(f"📍 SL capped: {old_new_sl} → {new_sl} ({sl_distance:.1f}% → {CAP_SL_DISTANCE_PCT}%)")
 
                     tr["sl_price"] = new_sl  # Always update trade data
                     if is_open:
