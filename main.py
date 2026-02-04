@@ -163,6 +163,22 @@ def main():
 
                 is_open = tr.get("status") == "open"
 
+                # Check if TP1 was HIT before our entry triggered → Cancel entry order
+                tps_hit = sig.get("tps_hit") or []
+                if not is_open and 1 in tps_hit:
+                    log.warning(f"⚠️ TP1 already HIT for {tr['symbol']} but entry not triggered - cancelling entry order")
+                    try:
+                        entry_oid = tr.get("entry_order_id")
+                        if entry_oid and entry_oid != "DRY_RUN":
+                            engine.cancel_entry_order(tr["symbol"], entry_oid)
+                            log.info(f"🗑️ Entry order cancelled for {tr['symbol']} (TP1 hit before entry)")
+                    except Exception as e:
+                        log.warning(f"Failed to cancel entry: {e}")
+                    tr["status"] = "cancelled"
+                    tr["exit_reason"] = "tp1_hit_before_entry"
+                    tr["closed_ts"] = time.time()
+                    continue  # Skip further processing for this trade
+
                 if new_sl and new_sl != old_sl and not tr.get("sl_moved_to_be"):
                     log.info(f"🔄 Signal SL updated for {tr['symbol']}: {old_sl} → {new_sl}")
 

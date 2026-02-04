@@ -64,7 +64,19 @@ RE_TRADER = re.compile(
 
 # Status patterns to detect if trade is still valid for entry
 RE_AWAITING = re.compile(r"AWAITING\s+ENTRY|Pending", re.I)
-RE_CLOSED = re.compile(r"TRADE\s+CLOSED|CLOSED\s+AT\s+BREAKEVEN|TRADE\s+CANCELLED", re.I)
+RE_CLOSED = re.compile(r"TRADE\s+CLOSED|CLOSED\s+AT\s+BREAKEVEN|TRADE\s+CANCELLED|STOPPED\s+OUT", re.I)
+
+# TP HIT detection: "✅ TP1: 0.09796 HIT" or "✅ **TP1:** `0.09796` *HIT*"
+RE_TP_HIT = re.compile(
+    r"[✅☑️]\s*\*{0,2}TP(\d+)\s*:\s*\*{0,2}\s*`?\$?" + NUM + r"`?\s*(?:\*{0,2})?\s*HIT",
+    re.I
+)
+
+# Entry triggered: "📊 Entry: 0.09875 ✅ Triggered"
+RE_ENTRY_TRIGGERED = re.compile(
+    r"Entry\s*:\s*`?\$?" + NUM + r"`?\s*[✅☑️]\s*Triggered",
+    re.I
+)
 
 
 def parse_signal(text: str, quote: str = "USDT") -> Optional[Dict[str, Any]]:
@@ -157,22 +169,58 @@ def parse_signal(text: str, quote: str = "USDT") -> Optional[Dict[str, Any]]:
 
 def parse_signal_update(text: str) -> Dict[str, Any]:
     """
-    Parse signal for SL/DCA updates only.
+    Parse signal for SL/TP/DCA updates.
 
     Unlike parse_signal(), this does NOT require "NEW SIGNAL" in text.
-    Used for checking if an existing signal was updated with new SL/DCA values.
+    Used for checking if an existing signal was updated with new SL/TP/DCA values.
 
-    Returns dict with sl_price and dca_prices (may be None/empty if not found).
+    Returns dict with:
+    - sl_price: float or None
+    - tp_prices: list of TP prices
+    - dca_prices: list of DCA prices
+    - tps_hit: list of TP indices that are HIT (e.g., [1] means TP1 is HIT)
+    - entry_triggered: bool - whether entry was triggered
+    - is_closed: bool - whether trade is closed/stopped out
     """
     result = {
         "sl_price": None,
+        "tp_prices": [],
         "dca_prices": [],
+        "tps_hit": [],
+        "entry_triggered": False,
+        "is_closed": False,
     }
+
+    # Check if trade is closed/stopped out
+    if RE_CLOSED.search(text):
+        result["is_closed"] = True
+
+    # Check if entry was triggered
+    if RE_ENTRY_TRIGGERED.search(text):
+        result["entry_triggered"] = True
 
     # Parse Stop Loss
     msl = RE_SL.search(text)
     if msl:
         result["sl_price"] = float(msl.group(1))
+
+    # Parse TP prices
+    tps: List[float] = []
+    for m in RE_TP.finditer(text):
+        idx = int(m.group(1))
+        price = float(m.group(2))
+        while len(tps) < idx:
+            tps.append(0.0)
+        tps[idx-1] = price
+    result["tp_prices"] = [p for p in tps if p > 0]
+
+    # Parse which TPs are HIT
+    tps_hit: List[int] = []
+    for m in RE_TP_HIT.finditer(text):
+        idx = int(m.group(1))
+        if idx not in tps_hit:
+            tps_hit.append(idx)
+    result["tps_hit"] = sorted(tps_hit)
 
     # Parse DCA prices
     dcas: List[float] = []
