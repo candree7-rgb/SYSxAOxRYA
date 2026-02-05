@@ -164,27 +164,42 @@ def main():
                 is_open = tr.get("status") == "open"
 
                 # Check if TP1 was HIT before our entry triggered → Cancel entry order
-                # BUT: Only if entry is NOT triggered in the signal (otherwise our entry is probably filled too)
+                # BUT: Only cancel if we DON'T have an open position on Bybit
                 tps_hit = sig.get("tps_hit") or []
-                entry_triggered_in_signal = sig.get("entry_triggered", False)
 
-                if not is_open and 1 in tps_hit and not entry_triggered_in_signal:
-                    log.warning(f"⚠️ TP1 already HIT for {tr['symbol']} but entry not triggered - cancelling entry order")
+                if not is_open and 1 in tps_hit:
+                    # Check Bybit for actual position status before cancelling
+                    has_position = False
                     try:
-                        entry_oid = tr.get("entry_order_id")
-                        if entry_oid and entry_oid != "DRY_RUN":
-                            engine.cancel_entry_order(tr["symbol"], entry_oid)
-                            log.info(f"🗑️ Entry order cancelled for {tr['symbol']} (TP1 hit before entry)")
+                        positions = bybit.positions(CATEGORY, tr["symbol"])
+                        for pos in positions:
+                            if pos.get("symbol") == tr["symbol"] and float(pos.get("size", 0)) > 0:
+                                has_position = True
+                                break
                     except Exception as e:
-                        log.warning(f"Failed to cancel entry: {e}")
-                    tr["status"] = "cancelled"
-                    tr["exit_reason"] = "tp1_hit_before_entry"
-                    tr["closed_ts"] = time.time()
-                    continue  # Skip further processing for this trade
-                elif not is_open and 1 in tps_hit and entry_triggered_in_signal:
-                    # Entry triggered in signal but our status is still "pending"
-                    # This means our entry was probably filled - sync status
-                    log.info(f"ℹ️ TP1 HIT but entry also triggered in signal - our entry likely filled, keeping trade")
+                        log.warning(f"Could not check Bybit position for {tr['symbol']}: {e}")
+                        # If we can't check, don't cancel to be safe
+                        has_position = True
+
+                    if has_position:
+                        # We have an open position - sync status to "open" and continue
+                        log.info(f"ℹ️ TP1 HIT but we have open position on Bybit - syncing status to 'open'")
+                        tr["status"] = "open"
+                        is_open = True  # Update for rest of checks
+                    else:
+                        # No position - safe to cancel entry order
+                        log.warning(f"⚠️ TP1 already HIT for {tr['symbol']} and no position on Bybit - cancelling entry order")
+                        try:
+                            entry_oid = tr.get("entry_order_id")
+                            if entry_oid and entry_oid != "DRY_RUN":
+                                engine.cancel_entry_order(tr["symbol"], entry_oid)
+                                log.info(f"🗑️ Entry order cancelled for {tr['symbol']} (TP1 hit before entry)")
+                        except Exception as e:
+                            log.warning(f"Failed to cancel entry: {e}")
+                        tr["status"] = "cancelled"
+                        tr["exit_reason"] = "tp1_hit_before_entry"
+                        tr["closed_ts"] = time.time()
+                        continue  # Skip further processing for this trade
 
                 if new_sl and new_sl != old_sl and not tr.get("sl_moved_to_be"):
                     log.info(f"🔄 Signal SL updated for {tr['symbol']}: {old_sl} → {new_sl}")
