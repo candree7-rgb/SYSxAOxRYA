@@ -164,8 +164,11 @@ def main():
                 is_open = tr.get("status") == "open"
 
                 # Check if TP1 was HIT before our entry triggered → Cancel entry order
+                # BUT: Only if entry is NOT triggered in the signal (otherwise our entry is probably filled too)
                 tps_hit = sig.get("tps_hit") or []
-                if not is_open and 1 in tps_hit:
+                entry_triggered_in_signal = sig.get("entry_triggered", False)
+
+                if not is_open and 1 in tps_hit and not entry_triggered_in_signal:
                     log.warning(f"⚠️ TP1 already HIT for {tr['symbol']} but entry not triggered - cancelling entry order")
                     try:
                         entry_oid = tr.get("entry_order_id")
@@ -178,6 +181,10 @@ def main():
                     tr["exit_reason"] = "tp1_hit_before_entry"
                     tr["closed_ts"] = time.time()
                     continue  # Skip further processing for this trade
+                elif not is_open and 1 in tps_hit and entry_triggered_in_signal:
+                    # Entry triggered in signal but our status is still "pending"
+                    # This means our entry was probably filled - sync status
+                    log.info(f"ℹ️ TP1 HIT but entry also triggered in signal - our entry likely filled, keeping trade")
 
                 if new_sl and new_sl != old_sl and not tr.get("sl_moved_to_be"):
                     log.info(f"🔄 Signal SL updated for {tr['symbol']}: {old_sl} → {new_sl}")
